@@ -1,0 +1,8 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+btc_usd_1h.csv
+node_modules/
+dist/
+dist-server/
