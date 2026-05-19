@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import datetime
 import json
+import logging
 import math
 import os
 import re
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 import requests
 import uvicorn
@@ -15,12 +20,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-load_dotenv()
+load_dotenv(override=True)
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 DIST_PATH = APP_ROOT / 'dist'
 PORT = int(os.getenv('PORT', '8787'))
-OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'anthropic/claude-sonnet-4.6')
+OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'google/gemini-3.1-flash-lite')
 
 app = FastAPI(title='bot_trading python api')
 
@@ -37,6 +42,9 @@ def build_news_query(symbol: str) -> str:
         'BTC-USD': 'BTC OR Bitcoin crypto market',
         'ETH-USD': 'ETH OR Ethereum crypto market',
         '^GSPC': 'S&P 500 stock market',
+        'NVDA': 'Nvidia stock bourse',
+        'TTWO': 'Take-Two Interactive stock bourse',
+        'ACA.PA': 'Credit Agricole bourse action',
     }
     return queries.get(symbol, f'{symbol} stock market finance')
 
@@ -172,50 +180,143 @@ def fetch_market_data(symbol: str, range_value: str, interval: str) -> dict[str,
     }
 
 
-def fetch_news_items(symbol: str) -> list[dict[str, str]]:
-    response = requests.get(
-        'https://news.google.com/rss/search',
-        params={
-            'q': build_news_query(symbol),
-            'hl': 'fr',
-            'gl': 'FR',
-            'ceid': 'FR:fr',
-        },
-        headers={
-            'User-Agent': 'Mozilla/5.0',
-            'Accept': 'application/rss+xml, application/xml;q=0.9, */*;q=0.8',
-        },
-        timeout=20,
-    )
-
-    if not response.ok:
-        raise HTTPException(status_code=502, detail=f'Google News a repondu {response.status_code}.')
-
-    root = ElementTree.fromstring(response.text)
+def _parse_rss_items(xml_text: str, default_source: str, limit: int = 6) -> list[dict[str, str]]:
+    root = ElementTree.fromstring(xml_text)
     items: list[dict[str, str]] = []
-    for item in root.findall('./channel/item')[:8]:
-        title = (item.findtext('title') or 'Sans titre').replace(' - Google News', '')
+    for item in root.findall('./channel/item')[:limit]:
+        title = (item.findtext('title') or 'Sans titre').replace(' - Google News', '').strip()
         link = item.findtext('link') or '#'
-        source = item.findtext('source') or 'Google News'
+        source = item.findtext('source') or default_source
         published = item.findtext('pubDate') or 'Date inconnue'
-        items.append(
-            {
-                'title': title,
-                'link': link,
-                'source': source,
-                'published': published,
-            }
-        )
-
+        items.append({'title': title, 'link': link, 'source': source, 'published': published})
     return items
+
+
+def fetch_google_news(symbol: str) -> list[dict[str, str]]:
+    try:
+        response = requests.get(
+            'https://news.google.com/rss/search',
+            params={'q': build_news_query(symbol), 'hl': 'fr', 'gl': 'FR', 'ceid': 'FR:fr'},
+            headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'application/rss+xml'},
+            timeout=15,
+        )
+        if not response.ok:
+            return []
+        return _parse_rss_items(response.text, 'Google News', limit=6)
+    except Exception as exc:
+        logger.warning('Google News fetch failed for %s: %s', symbol, exc)
+        return []
+
+
+def _is_us_symbol(symbol: str) -> bool:
+    """True for plain US tickers (NVDA, TTWO) — false for exchange-suffixed ones (IS3N.DE, ACA.PA)."""
+    return '.' not in symbol and '-' not in symbol
+
+
+def _relevance_keywords(symbol: str) -> set[str]:
+    """Build a minimal set of terms an article title should contain to be considered relevant."""
+    queries = {
+        'SXR8.DE': {'s&p', 'sp500', 'sp 500', 'us stock', 'american stock', 'wall street', 'bourse américain'},
+        'IS3N.DE': {'emerging', 'émergent', 'msci', 'chine', 'china', 'inde', 'india', 'brésil', 'brazil', 'asie', 'asia'},
+        'EXSA.DE': {'europe', 'stoxx', 'eurostoxx', 'european stock'},
+        'ACA.PA': {'crédit agricole', 'credit agricole', 'aca', 'banque'},
+    }
+    if symbol in queries:
+        return queries[symbol]
+    base = symbol.split('.')[0].split('-')[0].lower()
+    return {base}
+
+
+def fetch_yahoo_finance_news(symbol: str) -> list[dict[str, str]]:
+    """Fetch news from Yahoo Finance JSON — only for US-listed symbols to avoid unrelated results."""
+    if not _is_us_symbol(symbol):
+        return []
+    try:
+        response = requests.get(
+            'https://query1.finance.yahoo.com/v1/finance/search',
+            params={'q': symbol, 'newsCount': 8, 'quotesCount': 0, 'enableFuzzyQuery': 'false'},
+            headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'},
+            timeout=15,
+        )
+        if not response.ok:
+            return []
+        articles = response.json().get('news', [])
+        keywords = _relevance_keywords(symbol)
+        items: list[dict[str, str]] = []
+        for article in articles[:8]:
+            title = article.get('title', 'Sans titre')
+            title_lower = title.lower()
+            if not any(kw in title_lower for kw in keywords):
+                continue
+            ts = article.get('providerPublishTime', 0)
+            published = datetime.datetime.utcfromtimestamp(ts).strftime('%a, %d %b %Y %H:%M:%S +0000') if ts else 'Date inconnue'
+            items.append({
+                'title': title,
+                'link': article.get('link', '#'),
+                'source': article.get('publisher', 'Yahoo Finance'),
+                'published': published,
+            })
+        return items
+    except Exception as exc:
+        logger.warning('Yahoo Finance news fetch failed for %s: %s', symbol, exc)
+        return []
+
+
+def fetch_yahoo_rss(symbol: str) -> list[dict[str, str]]:
+    """Fetch English RSS feed from Yahoo Finance (works best for US-listed symbols)."""
+    try:
+        response = requests.get(
+            'https://feeds.finance.yahoo.com/rss/2.0/headline',
+            params={'s': symbol, 'region': 'US', 'lang': 'en-US'},
+            headers={'User-Agent': 'Mozilla/5.0'},
+            timeout=10,
+        )
+        if not response.ok:
+            return []
+        return _parse_rss_items(response.text, 'Yahoo Finance RSS', limit=5)
+    except Exception as exc:
+        logger.warning('Yahoo RSS fetch failed for %s: %s', symbol, exc)
+        return []
+
+
+def fetch_news_items(symbol: str) -> list[dict[str, str]]:
+    google = fetch_google_news(symbol)
+    yahoo_json = fetch_yahoo_finance_news(symbol)
+    yahoo_rss = fetch_yahoo_rss(symbol)
+
+    # Merge, deduplicate by title (case-insensitive first 60 chars)
+    seen: set[str] = set()
+    merged: list[dict[str, str]] = []
+    for item in google + yahoo_json + yahoo_rss:
+        key = item['title'][:60].lower()
+        if key not in seen:
+            seen.add(key)
+            merged.append(item)
+
+    if not merged:
+        raise HTTPException(status_code=502, detail='Aucune source de news disponible pour ce symbole.')
+
+    return merged[:10]
 
 
 def heuristic_news_analysis(symbol: str, items: list[dict[str, str]]) -> dict[str, Any]:
     positive_keywords = {
-        'beat', 'beats', 'upgrade', 'upgrades', 'growth', 'record', 'surge', 'rally', 'expansion', 'bull', 'gain', 'positive', 'strong'
+        # anglais
+        'beat', 'beats', 'upgrade', 'upgrades', 'growth', 'record', 'surge', 'rally', 'expansion',
+        'bull', 'gain', 'positive', 'strong', 'rise', 'rises', 'profit', 'outperform', 'buy',
+        # français
+        'hausse', 'rebond', 'progression', 'croissance', 'record', 'surperforme', 'solide',
+        'positif', 'bénéfice', 'profit', 'achat', 'relèvement', 'révision à la hausse',
+        'dépasse', 'supérieur', 'optimisme', 'fort', 'bien', 'gagne', 'monte',
     }
     negative_keywords = {
-        'miss', 'downgrade', 'downgrades', 'fall', 'drops', 'drop', 'slump', 'risk', 'warning', 'bear', 'loss', 'negative', 'weak'
+        # anglais
+        'miss', 'downgrade', 'downgrades', 'fall', 'drops', 'drop', 'slump', 'risk', 'warning',
+        'bear', 'loss', 'negative', 'weak', 'cut', 'decline', 'sell', 'underperform',
+        # français
+        'baisse', 'recul', 'chute', 'risque', 'avertissement', 'perte', 'négatif', 'faible',
+        'déclin', 'effondrement', 'dégradation', 'vente', 'déception', 'inférieur', 'inquiétude',
+        'crainte', 'cède', 'plonge', 'révision à la baisse', 'mauvais', 'difficile',
     }
 
     score = 0
@@ -258,28 +359,41 @@ def extract_json_object(content: str) -> dict[str, Any] | None:
 
 def request_openrouter_analysis(symbol: str, items: list[dict[str, str]]) -> dict[str, Any]:
     api_key = os.getenv('OPENROUTER_API_KEY')
-    if not api_key or not items:
+    if not api_key:
+        logger.info('OPENROUTER_API_KEY absent, utilisation de l heuristique pour %s', symbol)
+        return heuristic_news_analysis(symbol, items)
+    if not items:
         return heuristic_news_analysis(symbol, items)
 
-    headlines_block = '\n'.join(f"- {item['title']} ({item['source']})" for item in items[:5])
+    headlines_block = '\n'.join(
+        f"- [{item['source']}] {item['title']}" for item in items[:8]
+    )
     payload = {
         'model': OPENROUTER_MODEL,
-        'temperature': 0.2,
+        'temperature': 0.1,
+        'max_tokens': 400,
         'messages': [
             {
                 'role': 'system',
                 'content': (
-                    'Tu es un analyste buy-side prudent. Reponds en JSON strict avec les cles '
-                    'sentiment, confidence, summary, drivers. '
-                    'sentiment doit etre compris entre -1 et 1, confidence entre 0 et 100, '
-                    'summary en francais sur une phrase, drivers tableau de 3 phrases maximum.'
+                    'Tu es un analyste financier buy-side senior. '
+                    'On te donne des titres de presse recents sur un actif financier (ETF ou action). '
+                    'Tu dois evaluer le sentiment de marche a court terme. '
+                    'Reponds UNIQUEMENT en JSON valide avec exactement ces cles : '
+                    'sentiment (float entre -1.0 et 1.0, jamais exactement 0 sauf si vraiment neutre), '
+                    'confidence (int entre 40 et 95), '
+                    'summary (string en francais, 1 phrase concise sur le signal), '
+                    'drivers (array de 2 a 3 strings en francais expliquant les facteurs cles). '
+                    'Sois precis et directif : evite les reponses generiques. '
+                    'Si les news sont positives, sentiment > 0.1. Si negatives, sentiment < -0.1.'
                 ),
             },
             {
                 'role': 'user',
                 'content': (
-                    f'Analyse ces news recentes sur {symbol}:\n{headlines_block}\n\n'
-                    'Retourne uniquement un objet JSON.'
+                    f'Actif analyse : {symbol}\n\n'
+                    f'Headlines recentes (sources mixtes, FR et EN) :\n{headlines_block}\n\n'
+                    'Retourne uniquement le JSON, sans markdown ni explication.'
                 ),
             },
         ],
@@ -291,34 +405,38 @@ def request_openrouter_analysis(symbol: str, items: list[dict[str, str]]) -> dic
             headers={
                 'Authorization': f'Bearer {api_key}',
                 'Content-Type': 'application/json',
-                'HTTP-Referer': 'http://localhost:5173',
+                'HTTP-Referer': 'http://localhost:8787',
                 'X-Title': 'bot_trading',
             },
             json=payload,
-            timeout=30,
+            timeout=35,
         )
         response.raise_for_status()
-        content = response.json()['choices'][0]['message']['content']
-        parsed = extract_json_object(content if isinstance(content, str) else json.dumps(content))
+        raw_content = response.json()['choices'][0]['message']['content']
+        content = raw_content if isinstance(raw_content, str) else json.dumps(raw_content)
+        parsed = extract_json_object(content)
         if not parsed:
-            raise ValueError('OpenRouter JSON parsing failed')
+            logger.warning('OpenRouter retourne un JSON non parseable pour %s : %s', symbol, content[:200])
+            raise ValueError('JSON parsing failed')
 
         sentiment = clamp(float(parsed.get('sentiment', 0.0)), -1.0, 1.0)
         confidence = int(clamp(float(parsed.get('confidence', 55)), 0, 100))
-        summary = str(parsed.get('summary', 'Lecture news disponible.'))
+        summary = str(parsed.get('summary', 'Signal news disponible.'))
         drivers = parsed.get('drivers', [])
         if not isinstance(drivers, list):
             drivers = [str(drivers)]
 
+        logger.info('OpenRouter OK pour %s : sentiment=%.2f confidence=%d', symbol, sentiment, confidence)
         return {
             'sentiment': sentiment,
             'confidence': confidence,
             'summary': summary,
-            'drivers': [str(driver) for driver in drivers[:3]],
+            'drivers': [str(d) for d in drivers[:3]],
             'llmUsed': True,
             'model': OPENROUTER_MODEL,
         }
-    except Exception:
+    except Exception as exc:
+        logger.error('OpenRouter failed pour %s : %s', symbol, exc)
         return heuristic_news_analysis(symbol, items)
 
 

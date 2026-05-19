@@ -152,19 +152,19 @@ button {
 }
 
 .ticker-form {
-  display: grid;
-  grid-template-columns: minmax(180px, 280px) auto;
-  gap: 12px;
+  display: flex;
 }
 
 .ticker-form input {
+  flex: 1;
+  min-width: 180px;
+  max-width: 320px;
   border: 1px solid rgba(41, 36, 31, 0.12);
   border-radius: 999px;
   padding: 14px 18px;
   background: rgba(255, 255, 255, 0.72);
 }
 
-.ticker-form button,
 .range-switcher button,
 .preset-strip button {
   border: none;
@@ -172,19 +172,38 @@ button {
   transition: transform 180ms ease, background 180ms ease, color 180ms ease;
 }
 
-.ticker-form button {
-  padding: 14px 20px;
-  background: var(--ink);
-  color: white;
-}
 
-.ticker-form button:hover,
 .range-switcher button:hover,
 .preset-strip button:hover {
   transform: translateY(-1px);
 }
 
-.preset-strip,
+.preset-strip {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.preset-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.preset-category {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 4px 10px;
+  background: rgba(41, 36, 31, 0.06);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
 .range-switcher {
   gap: 10px;
   flex-wrap: wrap;
@@ -212,7 +231,6 @@ button {
 .stat-grid article,
 .summary-copy,
 .summary-range,
-.panel--note,
 .panel--news-list {
   background: var(--panel-strong);
   border: 1px solid rgba(255, 255, 255, 0.6);
@@ -247,6 +265,9 @@ button {
 
 .dashboard-grid--bottom {
   margin-top: 22px;
+  display: flex;
+  gap: 22px;
+  align-items: stretch;
 }
 
 .panel {
@@ -270,13 +291,12 @@ button {
   gap: 18px;
 }
 
-.panel--news-list,
-.panel--note {
+.panel--news-list {
   flex: 1;
 }
 
 .panel--ranking {
-  width: 100%;
+  flex: 1.6;
 }
 
 .pill {
@@ -340,8 +360,7 @@ button {
 
 .stat-grid article,
 .summary-copy,
-.summary-range,
-.panel--note {
+.summary-range {
   border-radius: 24px;
   padding: 18px;
 }
@@ -556,16 +575,6 @@ button {
   font-weight: 500;
 }
 
-.panel--note p {
-  margin: 10px 0 0;
-  line-height: 1.6;
-}
-
-.plain-list {
-  margin: 14px 0 0;
-  padding-left: 18px;
-  line-height: 1.7;
-}
 
 .status-banner {
   margin-top: 18px;
@@ -600,6 +609,166 @@ button {
   border: 0;
 }
 
+/* ── Ranking button (dashboard) ─────────────────────────── */
+
+.preset-row {
+  display: flex;
+  align-items: center;
+}
+
+.ranking-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 20px;
+  background: var(--ink);
+  color: white;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 180ms ease, background 180ms ease;
+}
+
+.ranking-btn:hover {
+  transform: translateY(-1px);
+  background: var(--accent);
+}
+
+/* ── Ranking page ───────────────────────────────────────── */
+
+.ranking-page {
+  display: grid;
+  gap: 28px;
+}
+
+.ranking-page__header {
+  display: grid;
+  gap: 20px;
+}
+
+.ranking-page__title h1 {
+  font-family: 'Fraunces', serif;
+  font-size: clamp(2.2rem, 5vw, 3.5rem);
+  line-height: 1;
+  margin: 0;
+}
+
+.ranking-page__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+  padding: 20px;
+  border-radius: 24px;
+  background: var(--panel);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(22px);
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.filter-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.filter-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.filter-bar button {
+  border: 1px solid rgba(41, 36, 31, 0.12);
+  border-radius: 999px;
+  padding: 8px 16px;
+  background: rgba(255, 255, 255, 0.54);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: transform 180ms ease, background 180ms ease, color 180ms ease;
+}
+
+.filter-bar button:hover {
+  transform: translateY(-1px);
+}
+
+.filter-bar button.active {
+  background: var(--accent);
+  color: white;
+  border-color: transparent;
+}
+
+.ranking-list--full {
+  display: grid;
+  gap: 14px;
+}
+
+.ranking-empty {
+  padding: 40px 0;
+  text-align: center;
+  color: var(--muted);
+}
+
+.back-btn {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(41, 36, 31, 0.12);
+  border-radius: 999px;
+  padding: 10px 20px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: transform 180ms ease, background 180ms ease;
+}
+
+.back-btn:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+/* ── Tags (ranking page cards) ──────────────────────────── */
+
+.ranking-card__tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ranking-card__symbol {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.tag {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+
+.tag--category {
+  background: var(--slate-soft);
+  color: var(--slate);
+}
+
+.tag--origin {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 @media (max-width: 1080px) {
   .dashboard-grid,
   .dashboard-grid--bottom,
@@ -611,6 +780,10 @@ button {
   .headline-stats,
   .stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .preset-strip {
+    gap: 10px;
   }
 }
 

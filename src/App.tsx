@@ -4,10 +4,17 @@ import { MarketChart } from './components/MarketChart';
 import type { MarketResponse, NewsItem, NewsResponse, SignalResponse } from './types';
 
 const presets = [
-  { label: 'S&P 500', symbol: 'SXR8.DE' },
-  { label: 'Emerging Markets', symbol: 'IS3N.DE' },
-  { label: 'Stoxx Europe 600', symbol: 'EXSA.DE' },
+  { label: 'S&P 500', symbol: 'SXR8.DE', category: 'ETF', origin: 'Étrangère' },
+  { label: 'Emerging Markets', symbol: 'IS3N.DE', category: 'ETF', origin: 'Étrangère' },
+  { label: 'Stoxx Europe 600', symbol: 'EXSA.DE', category: 'ETF', origin: 'Étrangère' },
+  { label: 'Nvidia', symbol: 'NVDA', category: 'Action', origin: 'Étrangère' },
+  { label: 'Take-Two', symbol: 'TTWO', category: 'Action', origin: 'Étrangère' },
+  { label: 'Crédit Agricole', symbol: 'ACA.PA', category: 'Action', origin: 'Française' },
 ] as const;
+
+type Preset = (typeof presets)[number];
+type RankingEntry = SignalResponse & { labelName: string; category: Preset['category']; origin: Preset['origin'] };
+
 const defaultSymbol = presets[0].symbol;
 const ranges = [
   { label: '1M', value: '1mo' },
@@ -19,11 +26,7 @@ const ranges = [
 async function fetchJson<T>(url: string, signal: AbortSignal): Promise<T> {
   const response = await fetch(url, { signal });
   const payload = await response.json();
-
-  if (!response.ok) {
-    throw new Error(payload.message ?? 'Erreur reseau.');
-  }
-
+  if (!response.ok) throw new Error(payload.message ?? 'Erreur reseau.');
   return payload as T;
 }
 
@@ -35,48 +38,25 @@ function formatPrice(value: number, currency: string) {
   }).format(value);
 }
 
-function formatCompact(value: number) {
-  return new Intl.NumberFormat('fr-FR', {
-    notation: 'compact',
-    maximumFractionDigits: 2,
-  }).format(value);
-}
-
 function signalTone(action?: SignalResponse['action']) {
-  if (action === 'buy') {
-    return 'signal-tone--buy';
-  }
-
-  if (action === 'sell') {
-    return 'signal-tone--sell';
-  }
-
+  if (action === 'buy') return 'signal-tone--buy';
+  if (action === 'sell') return 'signal-tone--sell';
   return 'signal-tone--hold';
 }
 
 function signalBadgeClass(action?: SignalResponse['action']) {
-  if (action === 'buy') {
-    return 'signal-badge signal-badge--buy';
-  }
-
-  if (action === 'sell') {
-    return 'signal-badge signal-badge--sell';
-  }
-
+  if (action === 'buy') return 'signal-badge signal-badge--buy';
+  if (action === 'sell') return 'signal-badge signal-badge--sell';
   return 'signal-badge signal-badge--hold';
 }
 
 function sparklinePath(values: number[]) {
-  if (values.length === 0) {
-    return '';
-  }
-
+  if (values.length === 0) return '';
   const width = 320;
   const height = 70;
   const min = Math.min(...values);
   const max = Math.max(...values);
   const spread = max - min || 1;
-
   return values
     .map((value, index) => {
       const x = (index / Math.max(values.length - 1, 1)) * width;
@@ -88,7 +68,6 @@ function sparklinePath(values: number[]) {
 
 function RangeMeter({ low, high, current }: { low: number; high: number; current: number }) {
   const position = high === low ? 50 : ((current - low) / (high - low)) * 100;
-
   return (
     <div className="range-meter">
       <div className="range-meter__labels">
@@ -118,21 +97,50 @@ function NewsRail({ items }: { items: NewsItem[] }) {
   );
 }
 
+function FilterBar<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: T[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="filter-bar">
+      {options.map((opt) => (
+        <button
+          key={opt}
+          type="button"
+          className={opt === value ? 'active' : ''}
+          onClick={() => onChange(opt)}
+        >
+          {opt}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function App() {
-  const [draftSymbol, setDraftSymbol] = useState(defaultSymbol);
-  const [symbol, setSymbol] = useState(defaultSymbol);
+  const [view, setView] = useState<'dashboard' | 'ranking'>('dashboard');
+  const [draftSymbol, setDraftSymbol] = useState<string>(defaultSymbol);
+  const [symbol, setSymbol] = useState<string>(defaultSymbol);
   const [range, setRange] = useState<(typeof ranges)[number]['value']>('1y');
   const [market, setMarket] = useState<MarketResponse | null>(null);
   const [news, setNews] = useState<NewsResponse | null>(null);
   const [signal, setSignal] = useState<SignalResponse | null>(null);
-  const [ranking, setRanking] = useState<Array<SignalResponse & { labelName: string }>>([]);
+  const [ranking, setRanking] = useState<RankingEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [filterCategory, setFilterCategory] = useState<'Tous' | 'ETF' | 'Action'>('Tous');
+  const [filterOrigin, setFilterOrigin] = useState<'Tous' | 'Française' | 'Étrangère'>('Tous');
+
   const deferredSymbol = useDeferredValue(symbol);
 
   useEffect(() => {
     const controller = new AbortController();
-
     startTransition(() => {
       setIsLoading(true);
       setError(null);
@@ -148,11 +156,7 @@ export default function App() {
             `/api/signal?symbol=${encodeURIComponent(preset.symbol)}&range=${range}`,
             controller.signal,
           );
-
-          return {
-            ...presetSignal,
-            labelName: preset.label,
-          };
+          return { ...presetSignal, labelName: preset.label, category: preset.category, origin: preset.origin };
         }),
       ),
     ])
@@ -162,25 +166,17 @@ export default function App() {
         setSignal(signalPayload);
         setRanking(
           rankingPayload.sort((left, right) => {
-            if (right.action === left.action) {
-              return right.confidence - left.confidence;
-            }
-
+            if (right.action === left.action) return right.confidence - left.confidence;
             const order = { buy: 3, hold: 2, sell: 1 };
             return order[right.action] - order[left.action];
           }),
         );
       })
       .catch((requestError: Error) => {
-        if (requestError.name === 'AbortError') {
-          return;
-        }
-
+        if (requestError.name === 'AbortError') return;
         setError(requestError.message);
       })
-      .finally(() => {
-        setIsLoading(false);
-      });
+      .finally(() => setIsLoading(false));
 
     return () => controller.abort();
   }, [deferredSymbol, range]);
@@ -190,6 +186,93 @@ export default function App() {
   const latestClose = market?.stats.latestClose ?? 0;
   const changePercent = market?.stats.changePercent ?? 0;
   const isPositive = changePercent >= 0;
+
+  const filteredRanking = ranking.filter((entry) => {
+    if (filterCategory !== 'Tous' && entry.category !== filterCategory) return false;
+    if (filterOrigin !== 'Tous' && entry.origin !== filterOrigin) return false;
+    return true;
+  });
+
+  function navigateTo(sym: string) {
+    setDraftSymbol(sym);
+    startTransition(() => setSymbol(sym));
+    setView('dashboard');
+  }
+
+  if (view === 'ranking') {
+    return (
+      <main className="dashboard-shell">
+        <div className="dashboard-backdrop" />
+
+        <div className="ranking-page">
+          <div className="ranking-page__header">
+            <button className="back-btn" type="button" onClick={() => setView('dashboard')}>
+              ← Tableau de bord
+            </button>
+            <div className="ranking-page__title">
+              <p className="eyebrow">Classement</p>
+              <h1>Où acheter en premier</h1>
+            </div>
+            <div className="ranking-page__filters">
+              <div className="filter-group">
+                <span className="filter-label">Type</span>
+                <FilterBar
+                  options={['Tous', 'ETF', 'Action'] as const}
+                  value={filterCategory}
+                  onChange={setFilterCategory}
+                />
+              </div>
+              <div className="filter-group">
+                <span className="filter-label">Origine</span>
+                <FilterBar
+                  options={['Tous', 'Française', 'Étrangère'] as const}
+                  value={filterOrigin}
+                  onChange={setFilterOrigin}
+                />
+              </div>
+            </div>
+          </div>
+
+          {isLoading ? (
+            <div className="status-banner">Chargement des signaux en cours…</div>
+          ) : null}
+
+          <div className="ranking-list ranking-list--full">
+            {filteredRanking.length === 0 ? (
+              <p className="ranking-empty">Aucun actif ne correspond aux filtres sélectionnés.</p>
+            ) : (
+              filteredRanking.map((entry, index) => (
+                <button
+                  key={entry.symbol}
+                  className="ranking-card"
+                  onClick={() => navigateTo(entry.symbol)}
+                  type="button"
+                >
+                  <div className="ranking-card__rank">{String(index + 1).padStart(2, '0')}</div>
+                  <div className="ranking-card__body">
+                    <div className="ranking-card__topline">
+                      <strong>{entry.labelName}</strong>
+                      <div className="ranking-card__tags">
+                        <span className="tag tag--category">{entry.category}</span>
+                        <span className="tag tag--origin">{entry.origin}</span>
+                        <span className="ranking-card__symbol">{entry.symbol}</span>
+                      </div>
+                    </div>
+                    <p>{entry.summary}</p>
+                    <div className="ranking-card__metrics">
+                      <span className={signalBadgeClass(entry.action)}>{entry.label}</span>
+                      <span className={signalTone(entry.action)}>Confiance {entry.confidence}/100</span>
+                      <span>Score {entry.score.toFixed(2)}</span>
+                    </div>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="dashboard-shell">
@@ -214,24 +297,35 @@ export default function App() {
                 id="symbol"
                 value={draftSymbol}
                 onChange={(event) => setDraftSymbol(event.target.value)}
-                placeholder="Ex: SXR8.DE, IS3N.DE, EXSA.DE"
+                placeholder="Ex: NVDA, ACA.PA, TTWO… (↵)"
               />
-              <button type="submit">Charger</button>
             </form>
-            <div className="preset-strip">
-              {presets.map((preset) => (
-                <button
-                  key={preset.symbol}
-                  className={preset.symbol === symbol ? 'active' : ''}
-                  onClick={() => {
-                    setDraftSymbol(preset.symbol);
-                    startTransition(() => setSymbol(preset.symbol));
-                  }}
-                  title={preset.symbol}
-                  type="button"
-                >
-                  {preset.label}
-                </button>
+            <div className="preset-row">
+            <button className="ranking-btn" type="button" onClick={() => setView('ranking')}>
+              Classement →
+            </button>
+          </div>
+          <div className="preset-strip">
+              {(['ETF', 'Action'] as const).map((cat) => (
+                <div key={cat} className="preset-group">
+                  <span className="preset-category">{cat}</span>
+                  {presets
+                    .filter((p) => p.category === cat)
+                    .map((preset) => (
+                      <button
+                        key={preset.symbol}
+                        className={preset.symbol === symbol ? 'active' : ''}
+                        onClick={() => {
+                          setDraftSymbol(preset.symbol);
+                          startTransition(() => setSymbol(preset.symbol));
+                        }}
+                        title={preset.symbol}
+                        type="button"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                </div>
               ))}
             </div>
           </div>
@@ -273,7 +367,7 @@ export default function App() {
       </section>
 
       {error ? <div className="status-banner status-banner--error">{error}</div> : null}
-      {isLoading ? <div className="status-banner">Chargement des donnees en cours...</div> : null}
+      {isLoading ? <div className="status-banner">Chargement des donnees en cours…</div> : null}
 
       <section className="dashboard-grid">
         <article className="panel panel--chart">
@@ -387,42 +481,6 @@ export default function App() {
       </section>
 
       <section className="dashboard-grid dashboard-grid--bottom">
-        <article className="panel panel--ranking">
-          <div className="panel__header">
-            <div>
-              <p className="eyebrow">Classement</p>
-              <h2>Ou acheter en premier</h2>
-            </div>
-          </div>
-          <div className="ranking-list">
-            {ranking.map((entry, index) => (
-              <button
-                key={entry.symbol}
-                className="ranking-card"
-                onClick={() => {
-                  setDraftSymbol(entry.symbol);
-                  startTransition(() => setSymbol(entry.symbol));
-                }}
-                type="button"
-              >
-                <div className="ranking-card__rank">{String(index + 1).padStart(2, '0')}</div>
-                <div className="ranking-card__body">
-                  <div className="ranking-card__topline">
-                    <strong>{entry.labelName}</strong>
-                    <span>{entry.symbol}</span>
-                  </div>
-                  <p>{entry.summary}</p>
-                  <div className="ranking-card__metrics">
-                    <span className={signalBadgeClass(entry.action)}>{entry.label}</span>
-                    <span className={signalTone(entry.action)}>Confiance {entry.confidence}/100</span>
-                    <span>Score {entry.score.toFixed(2)}</span>
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
-        </article>
-
         <article className="panel panel--news-list">
           <div className="panel__header">
             <div>
@@ -443,25 +501,6 @@ export default function App() {
               </a>
             ))}
           </div>
-        </article>
-
-        <article className="panel panel--note">
-          <div className="panel__header">
-            <div>
-              <p className="eyebrow">Build note</p>
-              <h2>Nouvelle base projet</h2>
-            </div>
-          </div>
-          <p>
-            Le dashboard tourne maintenant avec un frontend React/Vite et un backend Python FastAPI. Le score
-            de confiance combine signaux techniques et lecture des news, avec OpenRouter quand une cle API est
-            disponible.
-          </p>
-          <ul className="plain-list">
-            <li>Frontend: React + Vite + TypeScript</li>
-            <li>Graphiques: Lightweight Charts</li>
-            <li>Backend: FastAPI Python</li>
-          </ul>
         </article>
       </section>
     </main>
