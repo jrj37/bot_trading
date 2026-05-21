@@ -17,13 +17,20 @@ interface MarketChartProps {
 }
 
 function averageWindow(points: MarketPoint[], index: number, size: number): number | null {
-  if (index < size - 1) {
-    return null;
-  }
-
+  if (index < size - 1) return null;
   const window = points.slice(index - (size - 1), index + 1);
   return window.reduce((sum, point) => sum + point.close, 0) / window.length;
 }
+
+const CHART_THEME = {
+  bg: '#0e1011',
+  text: '#c9c1ad',
+  grid: 'rgba(236, 229, 212, 0.05)',
+  border: 'rgba(236, 229, 212, 0.1)',
+  up: '#d49b54',
+  down: '#8b94a0',
+  ma: '#f6f1e6',
+};
 
 export function MarketChart({ points }: MarketChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -31,77 +38,47 @@ export function MarketChart({ points }: MarketChartProps) {
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const movingAverageRef = useRef<ISeriesApi<'Line'> | null>(null);
 
+  // Create chart once
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) {
-      return;
-    }
+    if (!container) return;
 
     const chart = createChart(container, {
       width: container.clientWidth,
       height: 420,
       layout: {
-        background: { type: ColorType.Solid, color: '#f4efe6' },
-        textColor: '#2e2a25',
-        fontFamily: 'Space Grotesk, sans-serif',
+        background: { type: ColorType.Solid, color: CHART_THEME.bg },
+        textColor: CHART_THEME.text,
+        fontFamily: 'Geist Mono, ui-monospace, monospace',
+        fontSize: 11,
       },
       grid: {
-        vertLines: { color: 'rgba(46, 42, 37, 0.06)' },
-        horzLines: { color: 'rgba(46, 42, 37, 0.08)' },
+        vertLines: { color: CHART_THEME.grid },
+        horzLines: { color: CHART_THEME.grid },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
+        vertLine: { color: CHART_THEME.border, width: 1, style: 3 },
+        horzLine: { color: CHART_THEME.border, width: 1, style: 3 },
       },
-      rightPriceScale: {
-        borderColor: 'rgba(46, 42, 37, 0.12)',
-      },
-      timeScale: {
-        borderColor: 'rgba(46, 42, 37, 0.12)',
-      },
+      rightPriceScale: { borderColor: CHART_THEME.border, scaleMargins: { top: 0.1, bottom: 0.1 } },
+      timeScale: { borderColor: CHART_THEME.border, timeVisible: false, secondsVisible: false },
     });
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#f28a2e',
-      downColor: '#5b6472',
+      upColor: CHART_THEME.up,
+      downColor: CHART_THEME.down,
       borderVisible: false,
-      wickUpColor: '#f28a2e',
-      wickDownColor: '#5b6472',
+      wickUpColor: CHART_THEME.up,
+      wickDownColor: CHART_THEME.down,
     });
 
     const movingAverageSeries = chart.addSeries(LineSeries, {
-      color: '#2f353d',
-      lineWidth: 2,
+      color: CHART_THEME.ma,
+      lineWidth: 1,
       priceLineVisible: false,
       lastValueVisible: false,
     });
-
-    candleSeries.setData(
-      points.map((point) => ({
-        time: point.time as Time,
-        open: point.open,
-        high: point.high,
-        low: point.low,
-        close: point.close,
-      }))
-    );
-
-    movingAverageSeries.setData(
-      points
-        .map((point, index) => {
-          const averageValue = averageWindow(points, index, 50);
-          if (averageValue == null) {
-            return null;
-          }
-
-          return {
-            time: point.time as Time,
-            value: averageValue,
-          };
-        })
-        .filter((point): point is { time: Time; value: number } => point !== null)
-    );
-
-    chart.timeScale().fitContent();
 
     chartRef.current = chart;
     candleRef.current = candleSeries;
@@ -119,6 +96,36 @@ export function MarketChart({ points }: MarketChartProps) {
       chartRef.current = null;
       chart.remove();
     };
+  }, []);
+
+  // Update data without re-creating chart (eliminates flicker)
+  useEffect(() => {
+    const chart = chartRef.current;
+    const candleSeries = candleRef.current;
+    const movingAverageSeries = movingAverageRef.current;
+    if (!chart || !candleSeries || !movingAverageSeries || points.length === 0) return;
+
+    candleSeries.setData(
+      points.map((point) => ({
+        time: point.time as Time,
+        open: point.open,
+        high: point.high,
+        low: point.low,
+        close: point.close,
+      })),
+    );
+
+    movingAverageSeries.setData(
+      points
+        .map((point, index) => {
+          const value = averageWindow(points, index, 50);
+          if (value == null) return null;
+          return { time: point.time as Time, value };
+        })
+        .filter((p): p is { time: Time; value: number } => p !== null),
+    );
+
+    chart.timeScale().fitContent();
   }, [points]);
 
   return <div className="market-chart" ref={containerRef} />;

@@ -2,6 +2,8 @@
 
 Dashboard de marche avec une interface React et un backend Python FastAPI.
 
+![Aperçu de l'application](docs/screenshot.png)
+
 ## Stack
 
 - React + TypeScript + Vite pour l'interface

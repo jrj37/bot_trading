@@ -25,7 +25,7 @@ load_dotenv(override=True)
 APP_ROOT = Path(__file__).resolve().parent.parent
 DIST_PATH = APP_ROOT / 'dist'
 PORT = int(os.getenv('PORT', '8787'))
-OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'google/gemini-3.1-flash-lite')
+OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'google/gemini-3.5-flash')
 
 app = FastAPI(title='bot_trading python api')
 
@@ -299,62 +299,214 @@ def fetch_news_items(symbol: str) -> list[dict[str, str]]:
     return merged[:10]
 
 
+# Weighted lexicons — stronger words contribute more, mild ones less.
+POSITIVE_WEIGHTS: dict[str, float] = {
+    # EN — strong
+    'crash higher': 2.5, 'soars': 2.2, 'soar': 2.2, 'skyrocket': 2.5, 'skyrockets': 2.5,
+    'surge': 2.0, 'surges': 2.0, 'surging': 2.0, 'breakout': 1.8, 'breakthrough': 1.8,
+    'record high': 2.2, 'record': 1.5, 'rally': 1.6, 'rallies': 1.6, 'rebound': 1.4,
+    'beat': 1.6, 'beats': 1.6, 'upgrade': 1.6, 'upgrades': 1.6, 'upgraded': 1.6,
+    'outperform': 1.5, 'outperforms': 1.5, 'bullish': 1.7, 'bull': 1.0,
+    # EN — mild
+    'growth': 1.0, 'gain': 0.9, 'gains': 0.9, 'rise': 0.8, 'rises': 0.8, 'rising': 0.8,
+    'positive': 0.9, 'strong': 1.0, 'expansion': 1.0, 'profit': 1.0, 'profits': 1.0,
+    'optimism': 1.1, 'optimistic': 1.1, 'momentum': 0.9, 'boost': 1.2, 'boosts': 1.2,
+    'jump': 1.4, 'jumps': 1.4, 'climb': 1.0, 'climbs': 1.0, 'higher': 0.7,
+    # FR — strong
+    'envolée': 2.2, 'envolee': 2.2, 'flambée': 2.2, 'flambee': 2.2, 'envole': 2.0,
+    'bondit': 1.8, 'bondissent': 1.8, 'explose': 2.0, 'explosent': 2.0,
+    'record historique': 2.2, 'plus haut': 1.6, 'au plus haut': 1.8,
+    'révision à la hausse': 2.0, 'revision a la hausse': 2.0, 'relèvement': 1.6, 'relevement': 1.6,
+    'surperforme': 1.5, 'surperformance': 1.5, 'dépasse les attentes': 2.0,
+    'dépasse': 1.4, 'depasse': 1.4, 'rebond': 1.4,
+    # FR — mild
+    'hausse': 1.0, 'progression': 1.0, 'progresse': 1.0, 'croissance': 1.0,
+    'solide': 1.0, 'positif': 0.9, 'bénéfice': 1.0, 'benefice': 1.0,
+    'optimisme': 1.1, 'fort': 0.8, 'gagne': 0.9, 'monte': 0.9, 'supérieur': 0.9,
+    'redresse': 1.2, 'redressement': 1.2, 'attractif': 1.0,
+}
+
+NEGATIVE_WEIGHTS: dict[str, float] = {
+    # EN — strong
+    'crash': 2.5, 'collapse': 2.5, 'collapses': 2.5, 'plunge': 2.2, 'plunges': 2.2,
+    'plunging': 2.2, 'tumble': 1.8, 'tumbles': 1.8, 'slump': 1.8, 'slumps': 1.8,
+    'rout': 2.0, 'meltdown': 2.5, 'crisis': 2.0, 'recession': 2.2, 'bankruptcy': 2.5,
+    'downgrade': 1.7, 'downgrades': 1.7, 'downgraded': 1.7, 'miss': 1.6, 'misses': 1.6,
+    'warning': 1.6, 'warns': 1.6, 'bearish': 1.7, 'bear market': 2.0,
+    'underperform': 1.5, 'underperforms': 1.5, 'sell-off': 2.0, 'selloff': 2.0,
+    'record low': 2.0,
+    # EN — mild
+    'fall': 1.0, 'falls': 1.0, 'falling': 1.0, 'drop': 1.0, 'drops': 1.0,
+    'decline': 1.0, 'declines': 1.0, 'declining': 1.0, 'cut': 1.2, 'cuts': 1.2,
+    'loss': 1.0, 'losses': 1.0, 'negative': 0.9, 'weak': 1.0, 'weakness': 1.0,
+    'risk': 0.8, 'risks': 0.8, 'concern': 0.9, 'concerns': 0.9, 'pressure': 0.8,
+    'fears': 1.1, 'fear': 1.0, 'lower': 0.7, 'slowdown': 1.4,
+    # FR — strong
+    'effondre': 2.5, 'effondrement': 2.5, 's effondre': 2.5, 'krach': 2.5,
+    'plonge': 2.0, 'plongent': 2.0, 'chute': 1.8, 'chutent': 1.8, 'dégringole': 2.0,
+    'degringole': 2.0, 'panique': 2.0, 'crise': 2.0, 'récession': 2.2, 'recession': 2.2,
+    'révision à la baisse': 2.0, 'revision a la baisse': 2.0, 'dégradation': 1.6, 'degradation': 1.6,
+    'avertissement': 1.6, 'profit warning': 2.0, 'au plus bas': 1.8, 'plus bas': 1.5,
+    # FR — mild
+    'baisse': 1.0, 'baissent': 1.0, 'recul': 1.1, 'recule': 1.1, 'reculent': 1.1,
+    'risque': 0.8, 'risques': 0.8, 'perte': 1.0, 'pertes': 1.0, 'négatif': 0.9,
+    'faible': 0.9, 'faiblesse': 1.0, 'déclin': 1.1, 'declin': 1.1,
+    'déception': 1.5, 'deception': 1.5, 'inférieur': 0.9, 'inferieur': 0.9,
+    'inquiétude': 1.2, 'inquietude': 1.2, 'crainte': 1.2, 'craintes': 1.2,
+    'cède': 1.0, 'cede': 1.0, 'mauvais': 0.9, 'difficile': 0.7, 'ralentissement': 1.3,
+}
+
+
+def _score_headline(title: str) -> tuple[float, float, list[str], list[str]]:
+    """Returns (positive_weight, negative_weight, matched_pos, matched_neg)."""
+    normalized = ' ' + title.lower() + ' '
+    pos_hits: list[tuple[str, float]] = []
+    neg_hits: list[tuple[str, float]] = []
+    for kw, w in POSITIVE_WEIGHTS.items():
+        if kw in normalized:
+            pos_hits.append((kw, w))
+    for kw, w in NEGATIVE_WEIGHTS.items():
+        if kw in normalized:
+            neg_hits.append((kw, w))
+    # Keep only the strongest hit per side to avoid double-counting synonyms like "fall/falls"
+    pos_w = max((w for _, w in pos_hits), default=0.0)
+    neg_w = max((w for _, w in neg_hits), default=0.0)
+    return pos_w, neg_w, [k for k, _ in pos_hits], [k for k, _ in neg_hits]
+
+
 def heuristic_news_analysis(symbol: str, items: list[dict[str, str]]) -> dict[str, Any]:
-    positive_keywords = {
-        # anglais
-        'beat', 'beats', 'upgrade', 'upgrades', 'growth', 'record', 'surge', 'rally', 'expansion',
-        'bull', 'gain', 'positive', 'strong', 'rise', 'rises', 'profit', 'outperform', 'buy',
-        # français
-        'hausse', 'rebond', 'progression', 'croissance', 'record', 'surperforme', 'solide',
-        'positif', 'bénéfice', 'profit', 'achat', 'relèvement', 'révision à la hausse',
-        'dépasse', 'supérieur', 'optimisme', 'fort', 'bien', 'gagne', 'monte',
-    }
-    negative_keywords = {
-        # anglais
-        'miss', 'downgrade', 'downgrades', 'fall', 'drops', 'drop', 'slump', 'risk', 'warning',
-        'bear', 'loss', 'negative', 'weak', 'cut', 'decline', 'sell', 'underperform',
-        # français
-        'baisse', 'recul', 'chute', 'risque', 'avertissement', 'perte', 'négatif', 'faible',
-        'déclin', 'effondrement', 'dégradation', 'vente', 'déception', 'inférieur', 'inquiétude',
-        'crainte', 'cède', 'plonge', 'révision à la baisse', 'mauvais', 'difficile',
-    }
+    """
+    News sentiment built from weighted keyword matches with:
+      - per-headline strongest-hit selection (avoids stacking synonyms)
+      - recency decay (newest headline weighs ~1.0, oldest ~0.55)
+      - tanh saturation so scores spread across the full [-1, 1] range
+    """
+    candidates = items[:8]
+    if not candidates:
+        return {
+            'sentiment': 0.0,
+            'confidence': 38,
+            'summary': f'Aucune news exploitable pour {symbol}.',
+            'drivers': ['Pas de headlines disponibles dans les sources surveillées.'],
+            'llmUsed': False,
+            'model': 'heuristic-fallback',
+        }
 
-    score = 0
-    drivers: list[str] = []
-    for item in items[:5]:
-        normalized = item['title'].lower()
-        positive_hits = sum(keyword in normalized for keyword in positive_keywords)
-        negative_hits = sum(keyword in normalized for keyword in negative_keywords)
-        score += positive_hits - negative_hits
-        if positive_hits > negative_hits:
-            drivers.append(f"Headline positive: {item['title']}")
-        elif negative_hits > positive_hits:
-            drivers.append(f"Headline negative: {item['title']}")
+    raw_score = 0.0
+    hit_count = 0
+    drivers: list[tuple[float, str]] = []  # (abs_weight, sentence)
+    n = len(candidates)
 
-    sentiment = clamp(score / max(len(items[:5]), 1), -1.0, 1.0)
-    action_bias = 'legerement haussier' if sentiment > 0.15 else 'legerement baissier' if sentiment < -0.15 else 'neutre'
+    for i, item in enumerate(candidates):
+        recency = 1.0 - (i / max(n, 1)) * 0.45  # 1.00 → 0.55
+        pos_w, neg_w, pos_kws, neg_kws = _score_headline(item['title'])
+        net = pos_w - neg_w
+        if pos_w > 0 or neg_w > 0:
+            hit_count += 1
+            raw_score += net * recency
+            if net > 0:
+                lex = ', '.join(pos_kws[:2])
+                drivers.append((abs(net), f"Headline haussière ({lex}) : {item['title']}"))
+            elif net < 0:
+                lex = ', '.join(neg_kws[:2])
+                drivers.append((abs(net), f"Headline baissière ({lex}) : {item['title']}"))
+
+    # tanh saturation gives a smooth, dynamic spread:
+    #   raw=±0.5 → ~±0.24   raw=±1 → ~±0.46   raw=±2 → ~±0.76   raw=±3.5 → ~±0.93
+    sentiment = math.tanh(raw_score / 2.2)
+    sentiment = round(clamp(sentiment, -1.0, 1.0), 3)
+
+    # Confidence: more matched headlines + bigger raw magnitude → higher confidence
+    coverage_boost = min(hit_count, 6) * 6.0
+    magnitude_boost = min(abs(raw_score), 5.0) * 5.0
+    confidence = int(clamp(40 + coverage_boost + magnitude_boost, 40, 88))
+
+    if sentiment > 0.35:
+        bias = 'nettement haussier'
+    elif sentiment > 0.12:
+        bias = 'légèrement haussier'
+    elif sentiment < -0.35:
+        bias = 'nettement baissier'
+    elif sentiment < -0.12:
+        bias = 'légèrement baissier'
+    else:
+        bias = 'neutre'
+
+    drivers.sort(key=lambda d: d[0], reverse=True)
+    top_drivers = [text for _, text in drivers[:3]] or [
+        'Peu de signaux textuels forts dans les headlines récentes — sentiment neutre par défaut.'
+    ]
 
     return {
         'sentiment': sentiment,
-        'confidence': int(clamp(45 + abs(sentiment) * 35, 35, 80)),
-        'summary': f"Lecture news pour {symbol}: flux {action_bias} sur les derniers titres Google News.",
-        'drivers': drivers[:3] or ['Peu de signaux textuels forts dans les headlines recentes.'],
+        'confidence': confidence,
+        'summary': f"Lecture news pour {symbol} : flux {bias} ({hit_count}/{n} headlines marquées, intensité {raw_score:+.2f}).",
+        'drivers': top_drivers,
         'llmUsed': False,
         'model': 'heuristic-fallback',
     }
 
 
 def extract_json_object(content: str) -> dict[str, Any] | None:
-    match = re.search(r'\{.*\}', content, flags=re.DOTALL)
-    if not match:
+    """Robust JSON extraction: strips markdown fences, balances brackets, tolerates truncation."""
+    if not content:
         return None
 
-    try:
-        parsed = json.loads(match.group(0))
-    except json.JSONDecodeError:
+    # Strip markdown code fences
+    cleaned = re.sub(r'```(?:json)?\s*', '', content)
+    cleaned = cleaned.replace('```', '')
+
+    # Find first '{'
+    start = cleaned.find('{')
+    if start < 0:
         return None
 
-    return parsed if isinstance(parsed, dict) else None
+    # Walk forward, tracking bracket depth, respecting strings
+    depth = 0
+    in_str = False
+    escape = False
+    end = -1
+    for i in range(start, len(cleaned)):
+        ch = cleaned[i]
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == '\\':
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+
+    candidates: list[str] = []
+    if end > 0:
+        candidates.append(cleaned[start:end + 1])
+    # Truncation rescue: re-balance missing braces / close open string
+    snippet = cleaned[start:]
+    if depth > 0:
+        repaired = snippet
+        if in_str:
+            repaired += '"'
+        repaired += '}' * depth
+        candidates.append(repaired)
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            continue
+
+    return None
 
 
 def request_openrouter_analysis(symbol: str, items: list[dict[str, str]]) -> dict[str, Any]:
@@ -366,34 +518,48 @@ def request_openrouter_analysis(symbol: str, items: list[dict[str, str]]) -> dic
         return heuristic_news_analysis(symbol, items)
 
     headlines_block = '\n'.join(
-        f"- [{item['source']}] {item['title']}" for item in items[:8]
+        f"{i+1}. [{item['source']}] {item['title']}"
+        for i, item in enumerate(items[:8])
     )
     payload = {
         'model': OPENROUTER_MODEL,
-        'temperature': 0.1,
-        'max_tokens': 400,
+        'temperature': 0.25,
+        'max_tokens': 4000,
+        # Disable Gemini 3.x "thinking" tokens — otherwise they eat the whole budget
+        'reasoning': {'enabled': False, 'max_tokens': 0},
         'messages': [
             {
                 'role': 'system',
                 'content': (
-                    'Tu es un analyste financier buy-side senior. '
-                    'On te donne des titres de presse recents sur un actif financier (ETF ou action). '
-                    'Tu dois evaluer le sentiment de marche a court terme. '
-                    'Reponds UNIQUEMENT en JSON valide avec exactement ces cles : '
-                    'sentiment (float entre -1.0 et 1.0, jamais exactement 0 sauf si vraiment neutre), '
-                    'confidence (int entre 40 et 95), '
-                    'summary (string en francais, 1 phrase concise sur le signal), '
-                    'drivers (array de 2 a 3 strings en francais expliquant les facteurs cles). '
-                    'Sois precis et directif : evite les reponses generiques. '
-                    'Si les news sont positives, sentiment > 0.1. Si negatives, sentiment < -0.1.'
+                    "Tu es un analyste buy-side senior. Tu lis des titres de presse récents sur un actif financier "
+                    "et tu produis un score de sentiment de marché à court terme.\n\n"
+                    "RÈGLES DE CALIBRATION OBLIGATOIRES — utilise TOUTE l'échelle [-1.0, 1.0] :\n"
+                    "  • +0.85 à +1.00  → catalyseur majeur très haussier (résultats record, rachat, percée historique)\n"
+                    "  • +0.55 à +0.84  → flux clairement positif (upgrades, beats EPS, momentum confirmé)\n"
+                    "  • +0.25 à +0.54  → flux modérément positif (newsflow constructif, perspectives bien orientées)\n"
+                    "  • +0.05 à +0.24  → biais légèrement positif (signaux faibles)\n"
+                    "  • -0.04 à +0.04  → vraiment neutre (rare : seulement si headlines sans implication directionnelle)\n"
+                    "  • -0.24 à -0.05  → biais légèrement négatif\n"
+                    "  • -0.54 à -0.25  → flux modérément négatif (downgrades, miss, ralentissement)\n"
+                    "  • -0.84 à -0.55  → flux clairement négatif (warnings, déceptions multiples)\n"
+                    "  • -1.00 à -0.85  → choc baissier majeur (crash, scandale, faillite, krach sectoriel)\n\n"
+                    "Tu DOIS varier ta réponse selon les headlines — ne réponds JAMAIS 0.2 par défaut.\n"
+                    "Pondère par la fraîcheur (premiers titres = plus récents = plus de poids) et la matérialité.\n\n"
+                    "Format de sortie : JSON STRICT, sans markdown, sans commentaire, avec exactement ces clés :\n"
+                    "  sentiment   : float, échelle ci-dessus\n"
+                    "  confidence  : int dans [40, 95] — plus haut si signaux convergents et nombreux\n"
+                    "  summary     : string en français, 1 phrase concise et opérationnelle (pas générique)\n"
+                    "  drivers     : array de 2 à 3 strings en français — chaque driver cite explicitement un fait du headline"
                 ),
             },
             {
                 'role': 'user',
                 'content': (
-                    f'Actif analyse : {symbol}\n\n'
-                    f'Headlines recentes (sources mixtes, FR et EN) :\n{headlines_block}\n\n'
-                    'Retourne uniquement le JSON, sans markdown ni explication.'
+                    f"Actif analysé : {symbol}\n\n"
+                    f"Headlines récentes (du plus récent au plus ancien) :\n{headlines_block}\n\n"
+                    "Évalue le sentiment selon la grille de calibration. "
+                    "Choisis une valeur PRÉCISE (ex : -0.43, +0.62) — pas un nombre rond comme 0.2 ou 0.5. "
+                    "Retourne uniquement le JSON."
                 ),
             },
         ],
@@ -411,12 +577,17 @@ def request_openrouter_analysis(symbol: str, items: list[dict[str, str]]) -> dic
             json=payload,
             timeout=35,
         )
-        response.raise_for_status()
+        if not response.ok:
+            logger.error('OpenRouter %s pour %s : %s', response.status_code, symbol, response.text[:500])
+            response.raise_for_status()
         raw_content = response.json()['choices'][0]['message']['content']
         content = raw_content if isinstance(raw_content, str) else json.dumps(raw_content)
         parsed = extract_json_object(content)
         if not parsed:
-            logger.warning('OpenRouter retourne un JSON non parseable pour %s : %s', symbol, content[:200])
+            logger.warning(
+                'OpenRouter JSON non parseable pour %s (len=%d, finish=%s) : %r',
+                symbol, len(content), response.json()['choices'][0].get('finish_reason'), content,
+            )
             raise ValueError('JSON parsing failed')
 
         sentiment = clamp(float(parsed.get('sentiment', 0.0)), -1.0, 1.0)
