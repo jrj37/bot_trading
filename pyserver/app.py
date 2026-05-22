@@ -524,9 +524,9 @@ def request_openrouter_analysis(symbol: str, items: list[dict[str, str]]) -> dic
     payload = {
         'model': OPENROUTER_MODEL,
         'temperature': 0.25,
-        'max_tokens': 4000,
-        # Disable Gemini 3.x "thinking" tokens — otherwise they eat the whole budget
-        'reasoning': {'enabled': False, 'max_tokens': 0},
+        'max_tokens': 8000,
+        # Gemini 3.x impose le reasoning : on prend l'effort minimal et on l'exclut de la sortie.
+        'reasoning': {'effort': 'low', 'exclude': True},
         'messages': [
             {
                 'role': 'system',
