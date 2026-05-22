@@ -2,6 +2,8 @@
 
 Dashboard de marche avec une interface React et un backend Python FastAPI.
 
+**Demo en ligne :** [bot-trading-beta.vercel.app](https://bot-trading-beta.vercel.app)
+
 ![Aperçu de l'application](docs/screenshot.png)
 
 ## Stack
