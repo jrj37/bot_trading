@@ -244,6 +244,38 @@ h1, h2 { margin: 0; font-weight: 400; }
   display: grid;
   gap: 22px;
   align-content: space-between;
+  transition: opacity 220ms ease;
+}
+
+.hero-card__headline.is-loading {
+  animation: headline-breath 1.6s ease-in-out infinite;
+}
+
+.hero-card__headline.is-loading h1 {
+  position: relative;
+  background: linear-gradient(
+    90deg,
+    var(--ivory-000) 0%,
+    var(--ivory-000) 35%,
+    var(--ivory-400) 50%,
+    var(--ivory-000) 65%,
+    var(--ivory-000) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: headline-shimmer 1.8s ease-in-out infinite;
+}
+
+@keyframes headline-breath {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.82; }
+}
+
+@keyframes headline-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 .hero-card__controls { display: grid; gap: 16px; }

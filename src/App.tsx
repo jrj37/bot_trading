@@ -234,6 +234,8 @@ export default function App() {
   const changePercent = market?.stats.changePercent ?? 0;
   const isPositive = changePercent >= 0;
   const isInitialLoading = isRefreshing && !hasLoadedOnce.current;
+  const isMarketStale = !market || market.symbol !== deferredSymbol;
+  const isSignalStale = !signal || signal.symbol !== deferredSymbol;
 
   const filteredRanking = ranking.filter((entry) => {
     if (filterCategory !== 'Tous' && entry.category !== filterCategory) return false;
@@ -379,43 +381,43 @@ export default function App() {
           </div>
         </div>
 
-        <div className="hero-card__headline">
+        <div className={`hero-card__headline${isMarketStale || isSignalStale ? ' is-loading' : ''}`}>
           <div>
             <p className="eyebrow">Marché suivi</p>
             <h1>
-              {market?.symbol ?? symbol}
-              <span>{market?.exchangeName ?? 'Marché global'}</span>
+              {isMarketStale ? symbol : market!.symbol}
+              <span>{isMarketStale ? 'Marché global' : market!.exchangeName}</span>
             </h1>
           </div>
           <div className="headline-stats">
             <article>
               <span>Close</span>
               <strong>
-                {market ? formatPrice(latestClose, market.currency) : <Skeleton width="6ch" />}
+                {isMarketStale ? <Skeleton width="6ch" /> : formatPrice(latestClose, market!.currency)}
               </strong>
             </article>
             <article>
               <span>Moy. mobile 50j</span>
               <strong>
-                {market ? formatPrice(market.stats.movingAverage50, market.currency) : <Skeleton width="6ch" />}
+                {isMarketStale ? <Skeleton width="6ch" /> : formatPrice(market!.stats.movingAverage50, market!.currency)}
               </strong>
             </article>
             <article>
               <span>Signal</span>
               <strong className={signalTone(signal?.action)}>
-                {signal ? signal.label : <Skeleton width="5ch" />}
+                {isSignalStale ? <Skeleton width="5ch" /> : signal!.label}
               </strong>
             </article>
             <article>
               <span>Confiance</span>
               <strong className={signalTone(signal?.action)}>
-                {signal ? `${signal.confidence}/100` : <Skeleton width="5ch" />}
+                {isSignalStale ? <Skeleton width="5ch" /> : `${signal!.confidence}/100`}
               </strong>
             </article>
             <article>
               <span>Range 52 semaines</span>
               <strong>
-                {market ? `${market.stats.low52w.toFixed(2)} – ${market.stats.high52w.toFixed(2)}` : <Skeleton width="10ch" />}
+                {isMarketStale ? <Skeleton width="10ch" /> : `${market!.stats.low52w.toFixed(2)} – ${market!.stats.high52w.toFixed(2)}`}
               </strong>
             </article>
           </div>
